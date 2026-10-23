@@ -6,7 +6,6 @@ use Typecho\Common;
 use Typecho\Cookie;
 use Typecho\Db\Exception as DbException;
 use Typecho\Widget;
-use Utils\PasswordHash;
 use Widget\Base\Users;
 
 if (!defined('__TYPECHO_ROOT_DIR__')) {
@@ -28,7 +27,7 @@ class User extends Users
      *
      * @var array
      */
-    public $groups = [
+    public array $groups = [
         'administrator' => 0,
         'editor' => 1,
         'contributor' => 2,
@@ -41,14 +40,14 @@ class User extends Users
      *
      * @var array
      */
-    private $currentUser;
+    private array $currentUser;
 
     /**
      * 是否已经登录
      *
      * @var boolean|null
      */
-    private $hasLogin = null;
+    private ?bool $hasLogin = null;
 
     /**
      * @param int $components
@@ -96,13 +95,18 @@ class User extends Users
         } else {
             $cookieUid = Cookie::get('__typecho_uid');
             if (null !== $cookieUid) {
-                /** 验证登陆 */
+                /** 验证登录 */
                 $user = $this->db->fetchRow($this->db->select()->from('table.users')
                     ->where('uid = ?', intval($cookieUid))
                     ->limit(1));
 
+                // the cookie is client-controlled: only accept the $T$ format commitLogin() issues,
+                // so a forged bcrypt / phpass cost cannot make hashValidate() burn CPU
                 $cookieAuthCode = Cookie::get('__typecho_authCode');
-                if ($user && Common::hashValidate($user['authCode'], $cookieAuthCode)) {
+                if (
+                    $user && null !== $cookieAuthCode && '$T$' == substr($cookieAuthCode, 0, 3)
+                    && Common::hashValidate($user['authCode'], $cookieAuthCode)
+                ) {
                     $this->currentUser = $user;
                     return ($this->hasLogin = true);
                 }
@@ -122,7 +126,7 @@ class User extends Users
      */
     public function logout()
     {
-        self::pluginHandle()->trigger($logoutPluggable)->logout();
+        self::pluginHandle()->trigger($logoutPluggable)->call('logout');
         if ($logoutPluggable) {
             return;
         }
@@ -145,7 +149,7 @@ class User extends Users
     public function login(string $name, string $password, bool $temporarily = false, int $expire = 0): bool
     {
         //插件接口
-        $result = self::pluginHandle()->trigger($loginPluggable)->login($name, $password, $temporarily, $expire);
+        $result = self::pluginHandle()->trigger($loginPluggable)->call('login', $name, $password, $temporarily, $expire);
         if ($loginPluggable) {
             return $result;
         }
@@ -153,24 +157,36 @@ class User extends Users
         /** 开始验证用户 **/
         $user = $this->db->fetchRow($this->db->select()
             ->from('table.users')
-            ->where((strpos($name, '@') ? 'mail' : 'name') . ' = ?', $name)
+            ->where('name = ?', $name)
             ->limit(1));
+
+        if (empty($user) && strpos($name, '@') !== false) {
+            $user = $this->db->fetchRow($this->db->select()
+                ->from('table.users')
+                ->where('mail = ?', $name)
+                ->limit(1));
+        }
 
         if (empty($user)) {
             return false;
         }
 
-        $hashValidate = self::pluginHandle()->trigger($hashPluggable)->hashValidate($password, $user['password']);
+        $hashValidate = self::pluginHandle()->trigger($hashPluggable)->call('hashValidate', $password, $user['password']);
         if (!$hashPluggable) {
-            if ('$P$' == substr($user['password'], 0, 3)) {
-                $hasher = new PasswordHash(8, true);
-                $hashValidate = $hasher->checkPassword($password, $user['password']);
-            } else {
-                $hashValidate = Common::hashValidate($password, $user['password']);
+            $hashValidate = Common::hashValidate($password, $user['password']);
+
+            // transparently upgrade phpass / legacy hashes to the current default algorithm
+            if ($hashValidate && Common::passwordNeedsRehash($user['password'])) {
+                $user['password'] = Common::hashPassword($password);
+
+                $this->db->query($this->db
+                    ->update('table.users')
+                    ->rows(['password' => $user['password']])
+                    ->where('uid = ?', $user['uid']));
             }
         }
 
-        if ($user && $hashValidate) {
+        if ($hashValidate) {
             if (!$temporarily) {
                 $this->commitLogin($user, $expire);
             }
@@ -179,12 +195,12 @@ class User extends Users
             $this->push($user);
             $this->currentUser = $user;
             $this->hasLogin = true;
-            self::pluginHandle()->loginSucceed($this, $name, $password, $temporarily, $expire);
+            self::pluginHandle()->call('loginSucceed', $this, $name, $password, $temporarily, $expire);
 
             return true;
         }
 
-        self::pluginHandle()->loginFail($this, $name, $password, $temporarily, $expire);
+        self::pluginHandle()->call('loginFail', $this, $name, $password, $temporarily, $expire);
         return false;
     }
 
@@ -195,8 +211,7 @@ class User extends Users
      */
     public function commitLogin(&$user, int $expire = 0)
     {
-        $authCode = function_exists('openssl_random_pseudo_bytes') ?
-            bin2hex(openssl_random_pseudo_bytes(16)) : sha1(Common::randString(20));
+        $authCode = bin2hex(random_bytes(16));
         $user['authCode'] = $authCode;
 
         Cookie::set('__typecho_uid', $user['uid'], $expire);
@@ -231,7 +246,7 @@ class User extends Users
         }
 
         if (empty($user)) {
-            self::pluginHandle()->simpleLoginFail($this);
+            self::pluginHandle()->call('simpleLoginFail', $this);
             return false;
         }
 
@@ -243,7 +258,7 @@ class User extends Users
         $this->currentUser = $user;
         $this->hasLogin = true;
 
-        self::pluginHandle()->simpleLoginSucceed($this, $user);
+        self::pluginHandle()->call('simpleLoginSucceed', $this, $user);
         return true;
     }
 
@@ -268,8 +283,8 @@ class User extends Users
             } else {
                 //防止循环重定向
                 $this->response->redirect(defined('__TYPECHO_ADMIN__') ? $this->options->loginUrl .
-                    (0 === strpos($this->request->getReferer(), $this->options->loginUrl) ? '' :
-                        '?referer=' . urlencode($this->request->makeUriByRequest())) : $this->options->siteUrl, false);
+                    (0 === strpos($this->request->getReferer() ?? '', $this->options->loginUrl) ? '' :
+                        '?referer=' . urlencode($this->request->makeUriByRequest())) : $this->options->siteUrl);
             }
         }
 

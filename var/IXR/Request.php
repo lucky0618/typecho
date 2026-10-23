@@ -12,7 +12,7 @@ class Request
     /**
      * @var string
      */
-    private $xml;
+    private string $xml;
 
     /**
      * @param string $method
@@ -20,6 +20,7 @@ class Request
      */
     public function __construct(string $method, array $args)
     {
+        $method = Value::escape($method);
         $this->xml = <<<EOD
 <?xml version="1.0"?>
 <methodCall>

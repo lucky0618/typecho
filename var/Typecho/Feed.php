@@ -33,7 +33,7 @@ class Feed
      * @access private
      * @var string
      */
-    private $type;
+    private string $type;
 
     /**
      * 字符集编码
@@ -41,7 +41,7 @@ class Feed
      * @access private
      * @var string
      */
-    private $charset;
+    private string $charset;
 
     /**
      * 语言状态
@@ -49,7 +49,7 @@ class Feed
      * @access private
      * @var string
      */
-    private $lang;
+    private string $lang;
 
     /**
      * 聚合地址
@@ -57,7 +57,7 @@ class Feed
      * @access private
      * @var string
      */
-    private $feedUrl;
+    private string $feedUrl;
 
     /**
      * 基本地址
@@ -65,7 +65,7 @@ class Feed
      * @access private
      * @var string
      */
-    private $baseUrl;
+    private string $baseUrl;
 
     /**
      * 聚合标题
@@ -73,15 +73,15 @@ class Feed
      * @access private
      * @var string
      */
-    private $title;
+    private string $title;
 
     /**
      * 聚合副标题
      *
      * @access private
-     * @var string
+     * @var string|null
      */
-    private $subTitle;
+    private ?string $subTitle;
 
     /**
      * 版本信息
@@ -89,7 +89,7 @@ class Feed
      * @access private
      * @var string
      */
-    private $version;
+    private string $version;
 
     /**
      * 所有的items
@@ -97,7 +97,7 @@ class Feed
      * @access private
      * @var array
      */
-    private $items = [];
+    private array $items = [];
 
     /**
      * 创建Feed对象
@@ -113,6 +113,14 @@ class Feed
         $this->type = $type;
         $this->charset = $charset;
         $this->lang = $lang;
+    }
+
+    /**
+     * @return string
+     */
+    public function getType(): string
+    {
+        return $this->type;
     }
 
     /**
@@ -143,6 +151,14 @@ class Feed
     public function setFeedUrl(string $feedUrl)
     {
         $this->feedUrl = $feedUrl;
+    }
+
+    /**
+     * @return string
+     */
+    public function getFeedUrl(): string
+    {
+        return $this->feedUrl;
     }
 
     /**
@@ -202,7 +218,9 @@ xmlns:dc="http://purl.org/dc/elements/1.1/">' . self::EOL;
                 $content .= '<title>' . htmlspecialchars($item['title']) . '</title>' . self::EOL;
                 $content .= '<link>' . $item['link'] . '</link>' . self::EOL;
                 $content .= '<dc:date>' . $this->dateFormat($item['date']) . '</dc:date>' . self::EOL;
-                $content .= '<description>' . strip_tags($item['content']) . '</description>' . self::EOL;
+                // ]]> is forbidden in character data too, &gt; keeps the parsed text identical
+                $content .= '<description>' . str_replace(']]>', ']]&gt;', strip_tags($item['content']))
+                    . '</description>' . self::EOL;
                 if (!empty($item['suffix'])) {
                     $content .= $item['suffix'];
                 }
@@ -218,7 +236,7 @@ xmlns:dc="http://purl.org/dc/elements/1.1/">' . self::EOL;
             $result .= '<channel rdf:about="' . $this->feedUrl . '">
 <title>' . htmlspecialchars($this->title) . '</title>
 <link>' . $this->baseUrl . '</link>
-<description>' . htmlspecialchars($this->subTitle) . '</description>
+<description>' . htmlspecialchars($this->subTitle ?? '') . '</description>
 <items>
 <rdf:Seq>' . self::EOL;
 
@@ -236,8 +254,7 @@ xmlns:dc="http://purl.org/dc/elements/1.1/">' . self::EOL;
 xmlns:content="http://purl.org/rss/1.0/modules/content/"
 xmlns:dc="http://purl.org/dc/elements/1.1/"
 xmlns:slash="http://purl.org/rss/1.0/modules/slash/"
-xmlns:atom="http://www.w3.org/2005/Atom"
-xmlns:wfw="http://wellformedweb.org/CommentAPI/">
+xmlns:atom="http://www.w3.org/2005/Atom">
 <channel>' . self::EOL;
 
             $content = '';
@@ -254,20 +271,19 @@ xmlns:wfw="http://wellformedweb.org/CommentAPI/">
 
                 if (!empty($item['category']) && is_array($item['category'])) {
                     foreach ($item['category'] as $category) {
-                        $content .= '<category><![CDATA[' . $category['name'] . ']]></category>' . self::EOL;
+                        $content .= '<category>' . $this->cdata($category['name']) . '</category>' . self::EOL;
                     }
                 }
 
                 if (!empty($item['excerpt'])) {
-                    $content .= '<description><![CDATA[' . strip_tags($item['excerpt'])
-                        . ']]></description>' . self::EOL;
+                    $content .= '<description>' . $this->cdata(strip_tags($item['excerpt']))
+                        . '</description>' . self::EOL;
                 }
 
                 if (!empty($item['content'])) {
-                    $content .= '<content:encoded xml:lang="' . $this->lang . '"><![CDATA['
-                        . self::EOL .
-                        $item['content'] . self::EOL .
-                        ']]></content:encoded>' . self::EOL;
+                    $content .= '<content:encoded xml:lang="' . $this->lang . '">'
+                        . $this->cdata(self::EOL . $item['content'] . self::EOL)
+                        . '</content:encoded>' . self::EOL;
                 }
 
                 if (isset($item['comments']) && strlen($item['comments']) > 0) {
@@ -275,9 +291,6 @@ xmlns:wfw="http://wellformedweb.org/CommentAPI/">
                 }
 
                 $content .= '<comments>' . $item['link'] . '#comments</comments>' . self::EOL;
-                if (!empty($item['commentsFeedUrl'])) {
-                    $content .= '<wfw:commentRss>' . $item['commentsFeedUrl'] . '</wfw:commentRss>' . self::EOL;
-                }
 
                 if (!empty($item['suffix'])) {
                     $content .= $item['suffix'];
@@ -294,7 +307,7 @@ xmlns:wfw="http://wellformedweb.org/CommentAPI/">
 <link>' . $this->baseUrl . '</link>
 <atom:link href="' . $this->feedUrl . '" rel="self" type="application/rss+xml" />
 <language>' . $this->lang . '</language>
-<description>' . htmlspecialchars($this->subTitle) . '</description>
+<description>' . htmlspecialchars($this->subTitle ?? '') . '</description>
 <lastBuildDate>' . $this->dateFormat($lastUpdate) . '</lastBuildDate>
 <pubDate>' . $this->dateFormat($lastUpdate) . '</pubDate>' . self::EOL;
 
@@ -312,7 +325,7 @@ xml:base="' . $this->baseUrl . '"
 
             foreach ($this->items as $item) {
                 $content .= '<entry>' . self::EOL;
-                $content .= '<title type="html"><![CDATA[' . $item['title'] . ']]></title>' . self::EOL;
+                $content .= '<title type="html">' . $this->cdata($item['title']) . '</title>' . self::EOL;
                 $content .= '<link rel="alternate" type="text/html" href="' . $item['link'] . '" />' . self::EOL;
                 $content .= '<id>' . $item['link'] . '</id>' . self::EOL;
                 $content .= '<updated>' . $this->dateFormat($item['date']) . '</updated>' . self::EOL;
@@ -330,16 +343,15 @@ xml:base="' . $this->baseUrl . '"
                 }
 
                 if (!empty($item['excerpt'])) {
-                    $content .= '<summary type="html"><![CDATA[' . htmlspecialchars($item['excerpt'])
-                        . ']]></summary>' . self::EOL;
+                    $content .= '<summary type="html">' . $this->cdata(htmlspecialchars($item['excerpt']))
+                        . '</summary>' . self::EOL;
                 }
 
                 if (!empty($item['content'])) {
                     $content .= '<content type="html" xml:base="' . $item['link']
-                        . '" xml:lang="' . $this->lang . '"><![CDATA['
-                        . self::EOL .
-                        $item['content'] . self::EOL .
-                        ']]></content>' . self::EOL;
+                        . '" xml:lang="' . $this->lang . '">'
+                        . $this->cdata(self::EOL . $item['content'] . self::EOL)
+                        . '</content>' . self::EOL;
                 }
 
                 if (isset($item['comments']) && strlen($item['comments']) > 0) {
@@ -364,9 +376,9 @@ xml:base="' . $this->baseUrl . '"
             }
 
             $result .= '<title type="text">' . htmlspecialchars($this->title) . '</title>
-<subtitle type="text">' . htmlspecialchars($this->subTitle) . '</subtitle>
+<subtitle type="text">' . htmlspecialchars($this->subTitle ?? '') . '</subtitle>
 <updated>' . $this->dateFormat($lastUpdate) . '</updated>
-<generator uri="http://typecho.org/" version="' . $this->version . '">Typecho</generator>
+<generator uri="https://typecho.org/" version="' . $this->version . '">Typecho</generator>
 <link rel="alternate" type="text/html" href="' . $this->baseUrl . '" />
 <id>' . $this->feedUrl . '</id>
 <link rel="self" type="application/atom+xml" href="' . $this->feedUrl . '" />
@@ -392,5 +404,16 @@ xml:base="' . $this->baseUrl . '"
         }
 
         return '';
+    }
+
+    /**
+     * 包裹为CDATA段, 拆分内容中的 ]]> 以免提前闭合
+     *
+     * @param string|null $value 原始内容, null 视为空串以保持旧的拼接行为
+     * @return string
+     */
+    private function cdata(?string $value): string
+    {
+        return '<![CDATA[' . str_replace(']]>', ']]]]><![CDATA[>', (string) $value) . ']]>';
     }
 }

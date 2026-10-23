@@ -5,7 +5,6 @@ namespace Widget\Users;
 use Typecho\Common;
 use Typecho\Widget\Exception;
 use Typecho\Widget\Helper\Form;
-use Utils\PasswordHash;
 use Widget\ActionInterface;
 use Widget\Base\Users;
 use Widget\Notice;
@@ -24,6 +23,8 @@ if (!defined('__TYPECHO_ROOT_DIR__')) {
  */
 class Edit extends Users implements ActionInterface
 {
+    use EditTrait;
+
     /**
      * 执行函数
      *
@@ -36,9 +37,9 @@ class Edit extends Users implements ActionInterface
         $this->user->pass('administrator');
 
         /** 更新模式 */
-        if (($this->request->uid && 'delete' != $this->request->do) || 'update' == $this->request->do) {
+        if (($this->request->is('uid') && 'delete' != $this->request->get('do')) || $this->request->is('do=update')) {
             $this->db->fetchRow($this->select()
-                ->where('uid = ?', $this->request->uid)->limit(1), [$this, 'push']);
+                ->where('uid = ?', $this->request->get('uid'))->limit(1), [$this, 'push']);
 
             if (!$this->have()) {
                 throw new Exception(_t('用户不存在'), 404);
@@ -83,12 +84,10 @@ class Edit extends Users implements ActionInterface
             $this->response->goBack();
         }
 
-        $hasher = new PasswordHash(8, true);
-
         /** 取出数据 */
         $user = $this->request->from('name', 'mail', 'screenName', 'password', 'url', 'group');
         $user['screenName'] = empty($user['screenName']) ? $user['name'] : $user['screenName'];
-        $user['password'] = $hasher->hashPassword($user['password']);
+        $user['password'] = Common::hashPassword($user['password']);
         $user['created'] = $this->options->time;
 
         /** 插入数据 */
@@ -143,7 +142,7 @@ class Edit extends Users implements ActionInterface
         $form->addInput($confirm);
 
         /** 个人主页地址 */
-        $url = new Form\Element\Text('url', null, null, _t('个人主页地址'), _t('此用户的个人主页地址, 请用 <code>http://</code> 开头.'));
+        $url = new Form\Element\Text('url', null, null, _t('个人主页地址'), _t('此用户的个人主页地址, 请用 <code>https://</code> 开头.'));
         $form->addInput($url);
 
         /** 用户组 */
@@ -155,7 +154,7 @@ class Edit extends Users implements ActionInterface
             ],
             null,
             _t('用户组'),
-            _t('不同的用户组拥有不同的权限.') . '<br />' . _t('具体的权限分配表请<a href="http://docs.typecho.org/develop/acl">参考这里</a>.')
+            _t('不同的用户组拥有不同的权限.') . '<br />' . _t('具体的权限分配表请<a href="https://docs.typecho.org/develop/acl">参考这里</a>.')
         );
         $form->addInput($group);
 
@@ -172,7 +171,7 @@ class Edit extends Users implements ActionInterface
         $submit->input->setAttribute('class', 'btn primary');
         $form->addItem($submit);
 
-        if (null != $this->request->uid) {
+        if ($this->request->is('uid')) {
             $submit->value(_t('编辑用户'));
             $name->value($this->name);
             $screenName->value($this->screenName);
@@ -239,22 +238,21 @@ class Edit extends Users implements ActionInterface
         if (empty($user['password'])) {
             unset($user['password']);
         } else {
-            $hasher = new PasswordHash(8, true);
-            $user['password'] = $hasher->hashPassword($user['password']);
+            $user['password'] = Common::hashPassword($user['password']);
         }
 
         /** 更新数据 */
-        $this->update($user, $this->db->sql()->where('uid = ?', $this->request->uid));
+        $this->update($user, $this->db->sql()->where('uid = ?', $this->request->get('uid')));
 
         /** 设置高亮 */
-        Notice::alloc()->highlight('user-' . $this->request->uid);
+        Notice::alloc()->highlight('user-' . $this->request->get('uid'));
 
         /** 提示信息 */
         Notice::alloc()->set(_t('用户 %s 已经被更新', $user['screenName']), 'success');
 
         /** 转向原页 */
         $this->response->redirect(Common::url('manage-users.php?' .
-            $this->getPageOffsetQuery($this->request->uid), $this->options->adminUrl));
+            $this->getPageOffsetQuery($this->request->get('uid')), $this->options->adminUrl));
     }
 
     /**
